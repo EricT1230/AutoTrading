@@ -1,0 +1,420 @@
+"""
+专业交易图表组件
+
+包含K线图、技术指标、实时更新功能
+支持 MACD、MA、RSI、布林带等技术分析工具
+"""
+
+import streamlit as st
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Optional
+import time
+from datetime import datetime, timedelta
+
+from .market_data_provider import get_live_kline_data
+
+
+class TechnicalIndicators:
+    """技术指标计算类"""
+    
+    @staticmethod
+    def calculate_ma(data: pd.Series, period: int) -> pd.Series:
+        """计算移动平均线"""
+        return data.rolling(window=period).mean()
+    
+    @staticmethod
+    def calculate_ema(data: pd.Series, period: int) -> pd.Series:
+        """计算指数移动平均线"""
+        return data.ewm(span=period).mean()
+    
+    @staticmethod
+    def calculate_macd(data: pd.Series, fast=12, slow=26, signal=9) -> Dict[str, pd.Series]:
+        """计算MACD指标"""
+        ema_fast = data.ewm(span=fast).mean()
+        ema_slow = data.ewm(span=slow).mean()
+        macd_line = ema_fast - ema_slow
+        signal_line = macd_line.ewm(span=signal).mean()
+        histogram = macd_line - signal_line
+        
+        return {
+            'macd': macd_line,
+            'signal': signal_line,
+            'histogram': histogram
+        }
+    
+    @staticmethod
+    def calculate_rsi(data: pd.Series, period: int = 14) -> pd.Series:
+        """计算RSI指标"""
+        delta = data.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+    
+    @staticmethod
+    def calculate_bollinger_bands(data: pd.Series, period: int = 20, std: int = 2) -> Dict[str, pd.Series]:
+        """计算布林带"""
+        ma = data.rolling(window=period).mean()
+        std_dev = data.rolling(window=period).std()
+        upper = ma + (std_dev * std)
+        lower = ma - (std_dev * std)
+        
+        return {
+            'upper': upper,
+            'middle': ma,
+            'lower': lower
+        }
+
+
+class AdvancedChartComponent:
+    """高级图表组件"""
+    
+    def __init__(self):
+        self.indicators = TechnicalIndicators()
+    
+    def create_professional_chart(
+        self, 
+        symbol: str, 
+        timeframe: str = "5m", 
+        limit: int = 100,
+        show_indicators: List[str] = None
+    ) -> Optional[go.Figure]:
+        """创建专业交易图表"""
+        
+        # 获取K线数据
+        kline_data = get_live_kline_data(symbol, timeframe, limit)
+        
+        if kline_data is None or kline_data.empty:
+            st.error(f"无法获取 {symbol} 的K线数据")
+            return None
+        
+        # 默认显示的指标
+        if show_indicators is None:
+            show_indicators = ['MA', 'MACD', 'RSI']
+        
+        # 创建子图布局
+        subplot_count = 1
+        subplot_titles = [f'{symbol} K线图']
+        
+        if 'MACD' in show_indicators:
+            subplot_count += 1
+            subplot_titles.append('MACD')
+        
+        if 'RSI' in show_indicators:
+            subplot_count += 1
+            subplot_titles.append('RSI')
+        
+        # 设置子图高度
+        row_heights = [0.6] + [0.2] * (subplot_count - 1)
+        
+        fig = make_subplots(
+            rows=subplot_count,
+            cols=1,
+            subplot_titles=subplot_titles,
+            row_heights=row_heights,
+            vertical_spacing=0.05,
+            shared_xaxes=True
+        )
+        
+        # 1. K线图
+        fig.add_trace(
+            go.Candlestick(
+                x=kline_data.index,
+                open=kline_data['open'],
+                high=kline_data['high'],
+                low=kline_data['low'],
+                close=kline_data['close'],
+                name='K线',
+                increasing_line_color='#26a69a',
+                decreasing_line_color='#ef5350'
+            ),
+            row=1, col=1
+        )
+        
+        # 2. 移动平均线
+        if 'MA' in show_indicators:
+            ma_periods = [15, 30, 60, 90]
+            colors = ['#ff9800', '#2196f3', '#9c27b0', '#e91e63']
+            
+            for i, period in enumerate(ma_periods):
+                ma = self.indicators.calculate_ma(kline_data['close'], period)
+                fig.add_trace(
+                    go.Scatter(
+                        x=kline_data.index,
+                        y=ma,
+                        name=f'MA{period}',
+                        line=dict(color=colors[i], width=1.5),
+                        opacity=0.8
+                    ),
+                    row=1, col=1
+                )
+        
+        # 3. 布林带
+        if 'BOLLINGER' in show_indicators:
+            bb = self.indicators.calculate_bollinger_bands(kline_data['close'])
+            
+            # 上轨
+            fig.add_trace(
+                go.Scatter(
+                    x=kline_data.index,
+                    y=bb['upper'],
+                    name='布林上轨',
+                    line=dict(color='rgba(128,128,128,0.5)', width=1),
+                    fill=None
+                ),
+                row=1, col=1
+            )
+            
+            # 下轨
+            fig.add_trace(
+                go.Scatter(
+                    x=kline_data.index,
+                    y=bb['lower'],
+                    name='布林下轨',
+                    line=dict(color='rgba(128,128,128,0.5)', width=1),
+                    fill='tonexty',
+                    fillcolor='rgba(128,128,128,0.1)'
+                ),
+                row=1, col=1
+            )
+            
+            # 中轨
+            fig.add_trace(
+                go.Scatter(
+                    x=kline_data.index,
+                    y=bb['middle'],
+                    name='布林中轨',
+                    line=dict(color='rgba(255,193,7,0.8)', width=1)
+                ),
+                row=1, col=1
+            )
+        
+        current_row = 2
+        
+        # 4. MACD指标
+        if 'MACD' in show_indicators:
+            macd = self.indicators.calculate_macd(kline_data['close'])
+            
+            # MACD线
+            fig.add_trace(
+                go.Scatter(
+                    x=kline_data.index,
+                    y=macd['macd'],
+                    name='MACD',
+                    line=dict(color='#2196f3', width=2)
+                ),
+                row=current_row, col=1
+            )
+            
+            # 信号线
+            fig.add_trace(
+                go.Scatter(
+                    x=kline_data.index,
+                    y=macd['signal'],
+                    name='Signal',
+                    line=dict(color='#ff9800', width=2)
+                ),
+                row=current_row, col=1
+            )
+            
+            # 柱状图
+            colors = ['red' if x < 0 else 'green' for x in macd['histogram']]
+            fig.add_trace(
+                go.Bar(
+                    x=kline_data.index,
+                    y=macd['histogram'],
+                    name='MACD柱',
+                    marker_color=colors,
+                    opacity=0.6
+                ),
+                row=current_row, col=1
+            )
+            
+            current_row += 1
+        
+        # 5. RSI指标
+        if 'RSI' in show_indicators:
+            rsi = self.indicators.calculate_rsi(kline_data['close'])
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=kline_data.index,
+                    y=rsi,
+                    name='RSI',
+                    line=dict(color='#9c27b0', width=2)
+                ),
+                row=current_row, col=1
+            )
+            
+            # RSI超买超卖线
+            fig.add_hline(y=70, line_dash="dash", line_color="red", row=current_row, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="green", row=current_row, col=1)
+            fig.add_hline(y=50, line_dash="dot", line_color="gray", row=current_row, col=1)
+        
+        # 更新布局
+        fig.update_layout(
+            title=f'{symbol} 专业交易分析图表 - {timeframe}',
+            height=800,
+            showlegend=True,
+            xaxis_rangeslider_visible=False,
+            template='plotly_dark',
+            font=dict(size=12),
+            margin=dict(l=50, r=50, t=80, b=50)
+        )
+        
+        # 更新X轴
+        fig.update_xaxes(
+            title_text="时间",
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='rgba(128,128,128,0.2)'
+        )
+        
+        # 更新Y轴
+        fig.update_yaxes(
+            title_text="价格",
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='rgba(128,128,128,0.2)',
+            row=1, col=1
+        )
+        
+        return fig
+    
+    def render_chart_controls(self):
+        """渲染圖表控制面板"""
+        st.subheader("📊 專業圖表設置")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            symbol = st.selectbox(
+                "交易對",
+                ["BTC/USDT", "ETH/USDT", "SOL/USDT", "ADA/USDT"],
+                key="chart_symbol"
+            )
+        
+        with col2:
+            timeframe = st.selectbox(
+                "時間週期",
+                ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"],
+                index=2,
+                key="chart_timeframe"
+            )
+        
+        with col3:
+            limit = st.slider(
+                "資料量",
+                min_value=50,
+                max_value=500,
+                value=200,
+                step=50,
+                key="chart_limit"
+            )
+        
+        # 技術指標選擇
+        st.write("**技術指標選擇:**")
+        indicator_col1, indicator_col2, indicator_col3, indicator_col4 = st.columns(4)
+        
+        with indicator_col1:
+            show_ma = st.checkbox("移動平均線 (MA)", value=True, key="show_ma")
+        
+        with indicator_col2:
+            show_macd = st.checkbox("MACD", value=True, key="show_macd")
+        
+        with indicator_col3:
+            show_rsi = st.checkbox("RSI", value=True, key="show_rsi")
+        
+        with indicator_col4:
+            show_bollinger = st.checkbox("布林帶", value=False, key="show_bollinger")
+        
+        # 構建指標列表
+        indicators = []
+        if show_ma:
+            indicators.append('MA')
+        if show_macd:
+            indicators.append('MACD')
+        if show_rsi:
+            indicators.append('RSI')
+        if show_bollinger:
+            indicators.append('BOLLINGER')
+        
+        return symbol, timeframe, limit, indicators
+    
+    def render_realtime_chart(self):
+        """渲染实时更新的图表"""
+        # 图表控制面板
+        symbol, timeframe, limit, indicators = self.render_chart_controls()
+        
+        # 自动刷新控制
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            st.info(f"📈 正在显示 {symbol} {timeframe} 图表，包含 {', '.join(indicators)} 指标")
+        
+        with col2:
+            auto_update = st.checkbox("图表自动更新", value=True, key="chart_auto_update")
+        
+        # 创建图表容器
+        chart_container = st.empty()
+        
+        # 生成图表
+        with st.spinner("🔄 正在生成专业图表..."):
+            fig = self.create_professional_chart(symbol, timeframe, limit, indicators)
+        
+        if fig:
+            with chart_container:
+                st.plotly_chart(fig, use_container_width=True, key=f"chart_{symbol}_{timeframe}")
+            
+            # 显示最新价格信息
+            try:
+                kline_data = get_live_kline_data(symbol, timeframe, 1)
+                if kline_data is not None and not kline_data.empty:
+                    latest = kline_data.iloc[-1]
+                    change = ((latest['close'] - latest['open']) / latest['open']) * 100
+                    
+                    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+                    
+                    with metric_col1:
+                        st.metric("最新价格", f"${latest['close']:,.4f}")
+                    
+                    with metric_col2:
+                        st.metric("24h变化", f"{change:+.2f}%")
+                    
+                    with metric_col3:
+                        st.metric("24h最高", f"${latest['high']:,.4f}")
+                    
+                    with metric_col4:
+                        st.metric("24h最低", f"${latest['low']:,.4f}")
+            except Exception as e:
+                st.warning(f"无法获取最新价格信息: {e}")
+        
+        # 自动刷新逻辑
+        if auto_update:
+            if 'chart_last_update' not in st.session_state:
+                st.session_state.chart_last_update = time.time()
+            
+            current_time = time.time()
+            if current_time - st.session_state.chart_last_update >= 10:  # 每10秒刷新图表
+                st.session_state.chart_last_update = current_time
+                st.rerun()
+
+
+# 全局实例
+advanced_chart = AdvancedChartComponent()
+
+
+# 快速测试函数
+def test_chart_component():
+    """测试图表组件"""
+    st.title("📈 专业交易图表测试")
+    advanced_chart.render_realtime_chart()
+
+
+if __name__ == "__main__":
+    # 测试组件
+    test_chart_component()

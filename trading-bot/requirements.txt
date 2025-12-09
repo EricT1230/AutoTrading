@@ -1,0 +1,66 @@
+# 核心交易與數據處理
+pandas>=2.1.0
+numpy>=1.25.0
+ccxt>=4.1.0
+requests>=2.31.0
+
+# 環境與配置
+python-dotenv>=1.0.0
+PyYAML>=6.0.1
+
+# 數據視覺化
+matplotlib>=3.8.0
+seaborn>=0.12.0
+plotly>=5.17.0
+
+# 開發與研究
+jupyter>=1.0.0
+ipykernel>=6.25.0
+
+# 日誌與通知
+loguru>=0.7.0
+python-telegram-bot>=20.7
+
+# 時間處理
+pytz>=2023.3
+
+# 數學與統計
+scipy>=1.11.0
+scikit-learn>=1.3.0
+
+# 測試與程式碼品質
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.0.0
+
+# 網路與 API
+aiohttp>=3.9.0
+websockets>=11.0
+
+# 資料庫（可選）
+# sqlite3 已內建在 Python 中
+
+# Web UI 與圖表
+streamlit>=1.28.0
+plotly>=5.17.0
+dash>=2.14.0
+flask>=3.0.0
+flask-socketio>=5.3.0
+bokeh>=3.3.0
+
+# 實時數據處理
+redis>=5.0.0
+celery>=5.3.0
+websocket-client>=1.6.0
+
+# API 客戶端
+okx>=1.0.0
+
+# 技术分析（使用纯Python实现，无需TA-Lib）
+
+# 系統監控
+psutil>=5.9.0
+
+# 機器學習（未來擴展）
+# tensorflow>=2.13.0
+# torch>=2.0.0

@@ -1,0 +1,387 @@
+"""
+真實市場數據提供者
+
+整合多個數據源獲取真實的加密貨幣市場數據
+"""
+
+import asyncio
+import aiohttp
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Optional
+import time
+from datetime import datetime, timedelta
+import json
+from loguru import logger
+import streamlit as st
+
+
+class MarketDataProvider:
+    """市場數據提供者"""
+    
+    def __init__(self):
+        self.base_urls = {
+            'okx': 'https://www.okx.com/api/v5',
+            'binance': 'https://api.binance.com/api/v3',
+            'coinbase': 'https://api.exchange.coinbase.com',
+            'coingecko': 'https://api.coingecko.com/api/v3'
+        }
+        self.session = None
+        
+    async def get_session(self):
+        """獲取 aiohttp session"""
+        if self.session is None:
+            self.session = aiohttp.ClientSession()
+        return self.session
+    
+    async def close_session(self):
+        """關閉 session"""
+        if self.session:
+            await self.session.close()
+            self.session = None
+    
+    async def fetch_okx_ticker(self, symbol: str = "BTC-USDT") -> Optional[Dict]:
+        """獲取 OKX 行情數據"""
+        try:
+            session = await self.get_session()
+            url = f"{self.base_urls['okx']}/market/ticker"
+            params = {"instId": symbol}
+            
+            async with session.get(url, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get('code') == '0' and data.get('data'):
+                        ticker_data = data['data'][0]
+                        return {
+                            'symbol': symbol,
+                            'last_price': float(ticker_data.get('last', 0)),
+                            'bid': float(ticker_data.get('bidPx', 0)),
+                            'ask': float(ticker_data.get('askPx', 0)),
+                            'high_24h': float(ticker_data.get('high24h', 0)),
+                            'low_24h': float(ticker_data.get('low24h', 0)),
+                            'volume_24h': float(ticker_data.get('vol24h', 0)),
+                            'change_24h': float(ticker_data.get('chg24h', 0)) * 100,  # 轉為百分比
+                            'timestamp': int(ticker_data.get('ts', time.time() * 1000))
+                        }
+                        
+        except Exception as e:
+            logger.error(f"Error fetching OKX ticker for {symbol}: {e}")
+            return None
+    
+    async def fetch_okx_klines(self, symbol: str = "BTC-USDT", 
+                              timeframe: str = "5m", limit: int = 100) -> Optional[pd.DataFrame]:
+        """獲取 OKX K線數據"""
+        try:
+            session = await self.get_session()
+            url = f"{self.base_urls['okx']}/market/candles"
+            
+            # OKX 時間框架映射
+            tf_map = {
+                '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m',
+                '30m': '30m', '1h': '1H', '2h': '2H', '4h': '4H',
+                '6h': '6H', '12h': '12H', '1d': '1D', '1w': '1W'
+            }
+            
+            params = {
+                "instId": symbol,
+                "bar": tf_map.get(timeframe, '5m'),
+                "limit": str(limit)
+            }
+            
+            async with session.get(url, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get('code') == '0' and data.get('data'):
+                        klines = data['data']
+                        
+                        # 轉換為 DataFrame
+                        df_data = []
+                        for kline in klines:
+                            df_data.append({
+                                'timestamp': pd.to_datetime(int(kline[0]), unit='ms'),
+                                'open': float(kline[1]),
+                                'high': float(kline[2]),
+                                'low': float(kline[3]),
+                                'close': float(kline[4]),
+                                'volume': float(kline[5])
+                            })
+                        
+                        df = pd.DataFrame(df_data)
+                        df.set_index('timestamp', inplace=True)
+                        df = df.sort_index()  # 確保時間順序
+                        
+                        logger.info(f"Fetched {len(df)} klines for {symbol} {timeframe}")
+                        return df
+                        
+        except Exception as e:
+            logger.error(f"Error fetching OKX klines for {symbol}: {e}")
+            return None
+    
+    async def fetch_binance_ticker(self, symbol: str = "BTCUSDT") -> Optional[Dict]:
+        """獲取 Binance 行情數據（備用數據源）"""
+        try:
+            session = await self.get_session()
+            url = f"{self.base_urls['binance']}/ticker/24hr"
+            params = {"symbol": symbol}
+            
+            async with session.get(url, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        'symbol': symbol,
+                        'last_price': float(data.get('lastPrice', 0)),
+                        'bid': float(data.get('bidPrice', 0)),
+                        'ask': float(data.get('askPrice', 0)),
+                        'high_24h': float(data.get('highPrice', 0)),
+                        'low_24h': float(data.get('lowPrice', 0)),
+                        'volume_24h': float(data.get('volume', 0)),
+                        'change_24h': float(data.get('priceChangePercent', 0)),
+                        'timestamp': int(time.time() * 1000)
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Error fetching Binance ticker for {symbol}: {e}")
+            return None
+    
+    async def fetch_multiple_tickers(self, symbols: List[str]) -> Dict[str, Dict]:
+        """批量獲取多個交易對行情"""
+        tasks = []
+        for symbol in symbols:
+            # 優先使用 OKX，失敗時使用 Binance 作為備用
+            okx_symbol = symbol.replace('/', '-')
+            binance_symbol = symbol.replace('/', '')
+            
+            tasks.append(self._fetch_ticker_with_fallback(okx_symbol, binance_symbol))
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        ticker_data = {}
+        for i, result in enumerate(results):
+            if not isinstance(result, Exception) and result:
+                ticker_data[symbols[i]] = result
+        
+        return ticker_data
+    
+    async def _fetch_ticker_with_fallback(self, okx_symbol: str, binance_symbol: str) -> Optional[Dict]:
+        """獲取行情數據，帶備用數據源"""
+        # 嘗試 OKX
+        ticker = await self.fetch_okx_ticker(okx_symbol)
+        if ticker:
+            return ticker
+        
+        # 備用 Binance
+        logger.warning(f"OKX failed for {okx_symbol}, trying Binance {binance_symbol}")
+        ticker = await self.fetch_binance_ticker(binance_symbol)
+        if ticker:
+            ticker['symbol'] = okx_symbol  # 統一符號格式
+        return ticker
+    
+    def get_popular_symbols(self) -> List[str]:
+        """獲取熱門交易對列表"""
+        return [
+            'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT',
+            'ADA/USDT', 'XRP/USDT', 'DOT/USDT', 'AVAX/USDT',
+            'MATIC/USDT', 'LINK/USDT', 'UNI/USDT', 'LTC/USDT'
+        ]
+
+
+# 可配置的更新頻率設定
+UPDATE_INTERVALS = {
+    'ticker': 10,    # 行情數據：10秒更新
+    'kline': 30,     # K線數據：30秒更新
+    'multiple': 15   # 多交易對：15秒更新
+}
+
+# Streamlit 快取裝飾器版本的數據獲取函數
+@st.cache_data(ttl=UPDATE_INTERVALS['ticker'])
+def get_live_ticker_data(symbol: str) -> Optional[Dict]:
+    """獲取實時行情數據（有快取）"""
+    async def fetch_data():
+        provider = MarketDataProvider()
+        try:
+            okx_symbol = symbol.replace('/', '-')
+            data = await provider.fetch_okx_ticker(okx_symbol)
+            return data
+        finally:
+            await provider.close_session()
+    
+    # 在 Streamlit 中運行異步函數
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(fetch_data())
+        loop.close()
+        return result
+    except Exception as e:
+        logger.error(f"Error in get_live_ticker_data: {e}")
+        return None
+
+@st.cache_data(ttl=UPDATE_INTERVALS['kline'])
+def get_live_kline_data(symbol: str, timeframe: str = "5m", limit: int = 100) -> Optional[pd.DataFrame]:
+    """獲取實時K線數據（有快取）"""
+    async def fetch_data():
+        provider = MarketDataProvider()
+        try:
+            okx_symbol = symbol.replace('/', '-')
+            data = await provider.fetch_okx_klines(okx_symbol, timeframe, limit)
+            return data
+        finally:
+            await provider.close_session()
+    
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(fetch_data())
+        loop.close()
+        return result
+    except Exception as e:
+        logger.error(f"Error in get_live_kline_data: {e}")
+        return None
+
+@st.cache_data(ttl=UPDATE_INTERVALS['multiple'])
+def get_multiple_tickers_data(symbols: List[str]) -> Dict[str, Dict]:
+    """獲取多個交易對行情（有快取）"""
+    async def fetch_data():
+        provider = MarketDataProvider()
+        try:
+            data = await provider.fetch_multiple_tickers(symbols)
+            return data
+        finally:
+            await provider.close_session()
+    
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(fetch_data())
+        loop.close()
+        return result
+    except Exception as e:
+        logger.error(f"Error in get_multiple_tickers_data: {e}")
+        return {}
+
+
+class LiveDataComponent:
+    """實時數據組件"""
+    
+    @staticmethod
+    def render_live_ticker(symbol: str, placeholder=None):
+        """渲染實時行情組件"""
+        if placeholder is None:
+            placeholder = st.empty()
+        
+        with placeholder.container():
+            # 嘗試獲取實時數據
+            ticker_data = get_live_ticker_data(symbol)
+            
+            if ticker_data:
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    price = ticker_data['last_price']
+                    change = ticker_data['change_24h']
+                    delta_color = "normal" if change >= 0 else "inverse"
+                    st.metric(
+                        "最新價格",
+                        f"${price:,.2f}",
+                        f"{change:+.2f}%",
+                        delta_color=delta_color
+                    )
+                
+                with col2:
+                    volume = ticker_data['volume_24h']
+                    st.metric(
+                        "24h 成交量",
+                        f"{volume:,.0f}",
+                        help="24小時成交量"
+                    )
+                
+                with col3:
+                    bid = ticker_data['bid']
+                    st.metric(
+                        "買價",
+                        f"${bid:,.2f}",
+                        help="最佳買價"
+                    )
+                
+                with col4:
+                    ask = ticker_data['ask']
+                    st.metric(
+                        "賣價",
+                        f"${ask:,.2f}",
+                        help="最佳賣價"
+                    )
+                    
+                # 顯示更新時間
+                update_time = datetime.fromtimestamp(ticker_data['timestamp'] / 1000)
+                st.caption(f"數據更新時間: {update_time.strftime('%H:%M:%S')}")
+                
+            else:
+                with st.container():
+                    st.warning(f"⚠️ 無法獲取 {symbol} 的實時數據，請檢查網路連接")
+    
+    @staticmethod
+    def render_ticker_tape(symbols: List[str] = None):
+        """渲染行情跑馬燈"""
+        if symbols is None:
+            symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'ADA/USDT']
+        
+        st.subheader("📊 實時行情")
+        
+        # 獲取多個交易對數據
+        tickers_data = get_multiple_tickers_data(symbols)
+        
+        if tickers_data:
+            cols = st.columns(len(symbols))
+            
+            for i, symbol in enumerate(symbols):
+                if symbol in tickers_data:
+                    ticker = tickers_data[symbol]
+                    with cols[i]:
+                        price = ticker['last_price']
+                        change = ticker['change_24h']
+                        color = "🟢" if change >= 0 else "🔴"
+                        
+                        st.metric(
+                            f"{color} {symbol.replace('/', '')}",
+                            f"${price:,.2f}",
+                            f"{change:+.2f}%"
+                        )
+                else:
+                    with cols[i]:
+                        st.metric(f"❓ {symbol.replace('/', '')}", "Loading...", "...")
+        else:
+            st.info("正在載入市場數據...")
+
+
+# 全域實例
+market_data_provider = MarketDataProvider()
+live_data_component = LiveDataComponent()
+
+
+# 測試函數
+async def test_market_data():
+    """測試市場數據功能"""
+    provider = MarketDataProvider()
+    
+    try:
+        print("Testing OKX ticker...")
+        ticker = await provider.fetch_okx_ticker("BTC-USDT")
+        print(f"BTC-USDT ticker: {ticker}")
+        
+        print("\nTesting OKX klines...")
+        klines = await provider.fetch_okx_klines("BTC-USDT", "5m", 10)
+        if klines is not None:
+            print(f"Klines shape: {klines.shape}")
+            print(f"Latest price: {klines['close'].iloc[-1]}")
+        
+        print("\nTesting multiple tickers...")
+        tickers = await provider.fetch_multiple_tickers(['BTC/USDT', 'ETH/USDT'])
+        print(f"Multiple tickers: {tickers}")
+        
+    finally:
+        await provider.close_session()
+
+
+if __name__ == "__main__":
+    # 測試市場數據功能
+    asyncio.run(test_market_data())
