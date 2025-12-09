@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 import { Chart } from './Chart';
-import { Activity, Play, Square, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Activity, Play, Square } from 'lucide-react';
 import clsx from 'clsx';
 
 interface Kline {
@@ -22,7 +22,7 @@ export const Dashboard: React.FC = () => {
     const [socketUrl] = useState('ws://localhost:8000/ws');
     const [backendUrl] = useState('http://localhost:8002'); // 使用真實 OKX 後端
     const { lastMessage, readyState } = useWebSocket(socketUrl, {
-        shouldReconnect: (closeEvent) => true,
+        shouldReconnect: () => true,
         reconnectAttempts: 10,
         reconnectInterval: 3000,
     });

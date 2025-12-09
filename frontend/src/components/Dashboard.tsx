@@ -25,7 +25,7 @@ export const Dashboard: React.FC = () => {
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [status, setStatus] = useState({ active: false, strategy: 'ICT NY FVG' });
     const [currentPrice, setCurrentPrice] = useState<number>(0);
-    const [priceChange, setPriceChange] = useState<number>(0);
+    const [priceChange] = useState<number>(0);
     const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null);
     const [updateCount, setUpdateCount] = useState<number>(0);
     const [selectedTimeframe, setSelectedTimeframe] = useState<string>('5m');
