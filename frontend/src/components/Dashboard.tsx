@@ -1,6 +1,10 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Chart } from './Chart';
-import { Activity, Play, Square, RefreshCw, Database } from 'lucide-react';
+import { TechnicalIndicators } from './TechnicalIndicators';
+import { PositionsTable } from './PositionsTable';
+import { TradeHistory } from './TradeHistory';
+import { RiskManagement } from './RiskManagement';
+import { Activity, Play, Square, RefreshCw, Database, ChevronDown, ChevronUp, BarChart3, Wallet, History, Shield } from 'lucide-react';
 import clsx from 'clsx';
 import { useTradingStore } from '../store/tradingStore';
 import { useTrading } from '../hooks/useTrading';
@@ -16,7 +20,38 @@ const timeframes = [
   { value: '1d', label: '1天' },
 ];
 
+// 面板配置
+type PanelId = 'indicators' | 'positions' | 'trades' | 'risk';
+
+interface PanelConfig {
+  id: PanelId;
+  title: string;
+  icon: React.ReactNode;
+}
+
+const panels: PanelConfig[] = [
+  { id: 'indicators', title: '技術指標', icon: <BarChart3 className="w-4 h-4" /> },
+  { id: 'positions', title: '持倉', icon: <Wallet className="w-4 h-4" /> },
+  { id: 'trades', title: '交易歷史', icon: <History className="w-4 h-4" /> },
+  { id: 'risk', title: '風險管理', icon: <Shield className="w-4 h-4" /> },
+];
+
 export const Dashboard: React.FC = () => {
+  // 面板展開狀態
+  const [expandedPanels, setExpandedPanels] = useState<Set<PanelId>>(new Set(['indicators']));
+
+  const togglePanel = (id: PanelId) => {
+    setExpandedPanels((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
   // 從 Zustand store 取得狀態
   const {
     klines: realtimeKlines,
@@ -257,6 +292,39 @@ export const Dashboard: React.FC = () => {
                 {status.active ? '運行中' : '連接中'}
               </div>
             </div>
+          </div>
+
+          {/* 可折疊面板區域 */}
+          <div className="space-y-2">
+            {panels.map((panel) => (
+              <div key={panel.id} className="bg-slate-800 rounded-xl border border-slate-700/50 overflow-hidden">
+                <button
+                  onClick={() => togglePanel(panel.id)}
+                  className="w-full flex items-center justify-between p-4 hover:bg-slate-700/50 transition-colors"
+                >
+                  <div className="flex items-center gap-2 text-slate-200">
+                    {panel.icon}
+                    <span className="font-medium">{panel.title}</span>
+                  </div>
+                  {expandedPanels.has(panel.id) ? (
+                    <ChevronUp className="w-4 h-4 text-slate-400" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-slate-400" />
+                  )}
+                </button>
+
+                {expandedPanels.has(panel.id) && (
+                  <div className="p-4 pt-0">
+                    {panel.id === 'indicators' && (
+                      <TechnicalIndicators data={displayKlines} height={120} />
+                    )}
+                    {panel.id === 'positions' && <PositionsTable />}
+                    {panel.id === 'trades' && <TradeHistory limit={30} />}
+                    {panel.id === 'risk' && <RiskManagement />}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
 
