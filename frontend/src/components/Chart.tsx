@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, type IChartApi, type ISeriesApi, type CandlestickData, type Time } from 'lightweight-charts';
 
 interface ChartProps {
     data: { time: number; open: number; high: number; low: number; close: number }[];
@@ -14,8 +14,8 @@ interface ChartProps {
 
 export const Chart: React.FC<ChartProps> = ({ data, colors = {} }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
-    const chartRef = useRef<any>(null);
-    const seriesRef = useRef<any>(null);
+    const chartRef = useRef<IChartApi | null>(null);
+    const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
 
     const {
         backgroundColor = '#1e293b',
@@ -70,7 +70,14 @@ export const Chart: React.FC<ChartProps> = ({ data, colors = {} }) => {
             // Lightweight charts expects unique, sorted time.
             // We assume data coming in is correct, but for a real app we might need to dedupe.
             try {
-                seriesRef.current.setData(data as any);
+                const chartData: CandlestickData<Time>[] = data.map(d => ({
+                    time: d.time as Time,
+                    open: d.open,
+                    high: d.high,
+                    low: d.low,
+                    close: d.close,
+                }));
+                seriesRef.current.setData(chartData);
             } catch (e) {
                 console.error("Error setting chart data", e);
             }
