@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from core.okx_data_feed import OKXDataFeed, KlineData
 from core.redis_manager import redis_manager, Channels
+from api.trading_api import router as trading_router
 
 
 # Pydantic 模型
@@ -157,6 +158,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 註冊交易 API 路由
+app.include_router(trading_router)
 
 
 # API 端點

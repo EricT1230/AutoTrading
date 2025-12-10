@@ -2360,3 +2360,4 @@ kubectl scale deployment/backend --replicas=5 -n autotrading
 5. **運維效率**：Kubernetes 自動擴縮容、故障恢復
 
 建議按 P0 → P1 → P2 → P3 順序實施，每完成一個階段進行測試驗證。
+
