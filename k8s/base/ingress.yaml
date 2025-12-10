@@ -1,0 +1,95 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: autotrading-ingress
+  namespace: autotrading
+  labels:
+    app.kubernetes.io/name: autotrading
+    app.kubernetes.io/part-of: autotrading-system
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "backend"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: autotrading.local
+      http:
+        paths:
+          # Frontend (React SPA)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+          # Backend API
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          # WebSocket
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          # Health check
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: autotrading-network-policy
+  namespace: autotrading
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow ingress from within namespace
+    - from:
+        - podSelector: {}
+    # Allow ingress from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+  egress:
+    # Allow egress to within namespace
+    - to:
+        - podSelector: {}
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow external API access (OKX)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8443

@@ -1,0 +1,121 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: autotrading-prod
+
+resources:
+  - ../../base
+
+nameSuffix: -prod
+
+commonLabels:
+  environment: production
+
+patches:
+  # Production replicas
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+    target:
+      kind: Deployment
+      name: frontend
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+    target:
+      kind: Deployment
+      name: backend
+  # Production HPA
+  - patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 3
+      - op: replace
+        path: /spec/maxReplicas
+        value: 20
+    target:
+      kind: HorizontalPodAutoscaler
+  # Production resources - Frontend
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 200m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 256Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 1000m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 512Mi
+    target:
+      kind: Deployment
+      name: frontend
+  # Production resources - Backend
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 500m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 2000m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 1Gi
+    target:
+      kind: Deployment
+      name: backend
+  # Production storage
+  - patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 20Gi
+    target:
+      kind: StatefulSet
+      name: postgresql
+  - patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 10Gi
+    target:
+      kind: StatefulSet
+      name: redis
+  # Enable TLS for ingress in production
+  - patch: |-
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1cluster-issuer
+        value: letsencrypt-prod
+      - op: add
+        path: /spec/tls
+        value:
+          - hosts:
+              - autotrading.example.com
+            secretName: autotrading-tls
+      - op: replace
+        path: /spec/rules/0/host
+        value: autotrading.example.com
+    target:
+      kind: Ingress
+
+configMapGenerator:
+  - name: autotrading-config
+    behavior: merge
+    literals:
+      - log-level=INFO
+      - trading-mode=live
+      - api-url=https://autotrading.example.com/api
+      - ws-url=wss://autotrading.example.com/ws
+
+images:
+  - name: autotrading/frontend
+    newTag: v1.0.0
+  - name: autotrading/backend
+    newTag: v1.0.0
+  - name: autotrading/trading-bot
+    newTag: v1.0.0

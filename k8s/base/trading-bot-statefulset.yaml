@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: trading-bot
+  namespace: autotrading
+  labels:
+    app: trading-bot
+    app.kubernetes.io/name: trading-bot
+    app.kubernetes.io/component: bot
+    app.kubernetes.io/part-of: autotrading-system
+spec:
+  serviceName: trading-bot
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trading-bot
+  template:
+    metadata:
+      labels:
+        app: trading-bot
+        app.kubernetes.io/name: trading-bot
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: trading-bot
+          image: autotrading/trading-bot:latest
+          imagePullPolicy: Always
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: autotrading-secrets
+                  key: redis-url
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: autotrading-secrets
+                  key: database-url
+            - name: OKX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: autotrading-secrets
+                  key: okx-api-key
+            - name: OKX_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: autotrading-secrets
+                  key: okx-secret-key
+            - name: OKX_PASSPHRASE
+              valueFrom:
+                secretKeyRef:
+                  name: autotrading-secrets
+                  key: okx-passphrase
+            - name: TRADING_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: autotrading-config
+                  key: trading-mode
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: autotrading-config
+                  key: log-level
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 1Gi
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    echo "Graceful shutdown initiated..."
+                    kill -SIGTERM 1
+                    sleep 10
+      volumes:
+        - name: config
+          configMap:
+            name: trading-bot-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trading-bot
+  namespace: autotrading
+  labels:
+    app: trading-bot
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  selector:
+    app: trading-bot

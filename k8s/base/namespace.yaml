@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autotrading
+  labels:
+    app.kubernetes.io/name: autotrading
+    app.kubernetes.io/part-of: autotrading-system

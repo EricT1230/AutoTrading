@@ -1,0 +1,152 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: autotrading
+  labels:
+    app: backend
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: autotrading-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        app.kubernetes.io/name: backend
+    spec:
+      containers:
+        - name: backend
+          image: autotrading/backend:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: autotrading-secrets
+                  key: redis-url
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: autotrading-secrets
+                  key: database-url
+            - name: OKX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: autotrading-secrets
+                  key: okx-api-key
+            - name: OKX_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: autotrading-secrets
+                  key: okx-secret-key
+            - name: OKX_PASSPHRASE
+              valueFrom:
+                secretKeyRef:
+                  name: autotrading-secrets
+                  key: okx-passphrase
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: autotrading-config
+                  key: log-level
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: backend
+                topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: autotrading
+  labels:
+    app: backend
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP
+  selector:
+    app: backend
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: autotrading
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
