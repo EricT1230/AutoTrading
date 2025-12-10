@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Chart } from './Chart';
-import { Activity, Play, Square, RefreshCw } from 'lucide-react';
+import { Activity, Play, Square, RefreshCw, Database } from 'lucide-react';
 import clsx from 'clsx';
 import { useTradingStore } from '../store/tradingStore';
 import { useTrading } from '../hooks/useTrading';
+import { useHistoricalData, usePrefetchHistoricalData } from '../hooks/useApi';
 
 // 可用的時間框架選項
 const timeframes = [
@@ -18,65 +19,106 @@ const timeframes = [
 export const Dashboard: React.FC = () => {
   // 從 Zustand store 取得狀態
   const {
-    klines,
+    klines: realtimeKlines,
     currentPrice,
     priceChange,
     connectionStatus,
     selectedTimeframe,
-    isLoading,
     status,
     logs,
     updateCount,
     lastUpdateTime,
     setSelectedTimeframe,
+    setKlines,
+    addLog,
   } = useTradingStore();
 
   // 使用 WebSocket hook
+  const { subscribe, isConnected } = useTrading();
+
+  // 使用 TanStack Query 獲取歷史數據（帶緩存）
   const {
-    subscribe,
-    loadHistoricalData,
-    isConnected,
-  } = useTrading();
+    data: historicalKlines,
+    isLoading,
+    isFetching,
+    refetch,
+  } = useHistoricalData('BTC/USDT', selectedTimeframe, 100);
 
-  // 初始化：載入歷史數據並訂閱實時更新
-  useEffect(() => {
-    const init = async () => {
-      // 載入歷史數據
-      await loadHistoricalData('BTC/USDT', selectedTimeframe);
+  // 預取其他時間框架的數據
+  const prefetchData = usePrefetchHistoricalData();
 
-      // 連接成功後訂閱實時數據
-      if (isConnected) {
-        subscribe(['BTC/USDT'], selectedTimeframe);
+  // 合併歷史數據和實時數據
+  const displayKlines = useMemo(() => {
+    // 如果有歷史數據，使用歷史數據為基礎
+    if (historicalKlines && historicalKlines.length > 0) {
+      // 如果沒有實時數據，直接返回歷史數據
+      if (realtimeKlines.length === 0) {
+        return historicalKlines;
       }
-    };
 
-    init();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected]); // 只在連接狀態變化時執行，避免無限循環
+      // 合併：以歷史數據為主，實時數據更新最新的 K 線
+      const combined = [...historicalKlines];
+      const lastHistoricalTime = combined[combined.length - 1]?.time || 0;
 
-  // 時間框架變更時重新載入數據和訂閱
-  const handleTimeframeChange = async (timeframe: string) => {
+      for (const kline of realtimeKlines) {
+        if (kline.time > lastHistoricalTime) {
+          // 新的 K 線
+          combined.push(kline);
+        } else if (kline.time === lastHistoricalTime) {
+          // 更新最後一根 K 線
+          combined[combined.length - 1] = kline;
+        }
+      }
+
+      // 保持最多 100 根
+      return combined.slice(-100);
+    }
+
+    // 沒有歷史數據，使用實時數據
+    return realtimeKlines;
+  }, [historicalKlines, realtimeKlines]);
+
+  // 當歷史數據載入完成時，同步到 store
+  useEffect(() => {
+    if (historicalKlines && historicalKlines.length > 0) {
+      setKlines(historicalKlines);
+      addLog(`已載入 ${historicalKlines.length} 根 K 線數據 (緩存)`, 'success');
+    }
+  }, [historicalKlines, setKlines, addLog]);
+
+  // WebSocket 連接成功後訂閱
+  useEffect(() => {
+    if (isConnected) {
+      subscribe(['BTC/USDT'], selectedTimeframe);
+    }
+  }, [isConnected, selectedTimeframe, subscribe]);
+
+  // 時間框架變更
+  const handleTimeframeChange = (timeframe: string) => {
     if (timeframe === selectedTimeframe || isLoading) return;
-
     setSelectedTimeframe(timeframe);
 
-    // 重新載入歷史數據
-    await loadHistoricalData('BTC/USDT', timeframe);
-
-    // 重新訂閱
+    // 重新訂閱 WebSocket
     if (isConnected) {
       subscribe(['BTC/USDT'], timeframe);
     }
   };
 
-  // 手動刷新數據
-  const handleRefresh = async () => {
-    if (isLoading) return;
-    await loadHistoricalData('BTC/USDT', selectedTimeframe);
-    if (isConnected) {
-      subscribe(['BTC/USDT'], selectedTimeframe);
+  // 滑鼠懸停時預取數據
+  const handleTimeframeHover = (timeframe: string) => {
+    if (timeframe !== selectedTimeframe) {
+      prefetchData('BTC/USDT', timeframe);
     }
   };
+
+  // 手動刷新
+  const handleRefresh = () => {
+    if (isLoading || isFetching) return;
+    refetch();
+    addLog('手動刷新數據...', 'info');
+  };
+
+  const isLoadingData = isLoading || isFetching;
 
   return (
     <div className="min-h-screen bg-slate-900 p-6 text-slate-200 font-sans">
@@ -95,16 +137,16 @@ export const Dashboard: React.FC = () => {
           {/* 刷新按鈕 */}
           <button
             onClick={handleRefresh}
-            disabled={isLoading}
+            disabled={isLoadingData}
             className={clsx(
               "p-2 rounded-lg transition-colors",
-              isLoading
+              isLoadingData
                 ? "bg-slate-700 text-slate-500 cursor-not-allowed"
                 : "bg-slate-700 text-slate-300 hover:bg-slate-600"
             )}
             title="刷新數據"
           >
-            <RefreshCw className={clsx("w-4 h-4", isLoading && "animate-spin")} />
+            <RefreshCw className={clsx("w-4 h-4", isLoadingData && "animate-spin")} />
           </button>
 
           {/* 連接狀態指示器 */}
@@ -149,19 +191,20 @@ export const Dashboard: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-2">
-                {/* 時間框架選擇器 */}
+                {/* 時間框架選擇器（帶預取） */}
                 <div className="flex gap-1">
                   {timeframes.map((tf) => (
                     <button
                       key={tf.value}
                       onClick={() => handleTimeframeChange(tf.value)}
-                      disabled={isLoading}
+                      onMouseEnter={() => handleTimeframeHover(tf.value)}
+                      disabled={isLoadingData}
                       className={clsx(
                         "px-2 py-1 rounded text-xs font-medium transition-colors",
                         selectedTimeframe === tf.value
                           ? "bg-blue-500 text-white"
                           : "bg-slate-700 text-slate-300 hover:bg-slate-600",
-                        isLoading && "opacity-50 cursor-not-allowed"
+                        isLoadingData && "opacity-50 cursor-not-allowed"
                       )}
                       title={tf.label}
                     >
@@ -172,15 +215,16 @@ export const Dashboard: React.FC = () => {
 
                 {/* 狀態指示器 */}
                 <div className="flex gap-2 justify-end">
-                  <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">
-                    WebSocket
+                  <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs flex items-center gap-1">
+                    <Database className="w-3 h-3" />
+                    Query Cache
                   </span>
                   {lastUpdateTime && (
                     <span className="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs">
                       {lastUpdateTime.toLocaleTimeString()}
                     </span>
                   )}
-                  {isLoading && (
+                  {isLoadingData && (
                     <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs animate-pulse">
                       載入中...
                     </span>
@@ -188,7 +232,7 @@ export const Dashboard: React.FC = () => {
                 </div>
               </div>
             </div>
-            <Chart data={klines} />
+            <Chart data={displayKlines} />
           </div>
 
           {/* Quick Stats */}
@@ -202,7 +246,7 @@ export const Dashboard: React.FC = () => {
             <div className="bg-slate-800 p-4 rounded-xl border border-slate-700/50">
               <div className="text-slate-400 text-sm mb-1">實時更新</div>
               <div className="text-2xl font-bold text-blue-500">#{updateCount}</div>
-              <div className="text-xs text-slate-500 mt-1">via WebSocket</div>
+              <div className="text-xs text-slate-500 mt-1">via WebSocket + Query</div>
             </div>
             <div className="bg-slate-800 p-4 rounded-xl border border-slate-700/50">
               <div className="text-slate-400 text-sm mb-1">系統狀態</div>
@@ -240,8 +284,8 @@ export const Dashboard: React.FC = () => {
                 <span className="text-blue-500 font-medium">{selectedTimeframe}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-slate-400">連接模式</span>
-                <span className="text-green-400 font-medium">WebSocket</span>
+                <span className="text-slate-400">數據來源</span>
+                <span className="text-green-400 font-medium">WebSocket + Cache</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-slate-400">Risk per Trade</span>
